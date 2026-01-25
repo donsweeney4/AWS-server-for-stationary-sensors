@@ -1,4 +1,4 @@
-logs
+
 # Ignore files with HOLD anywhere in the name (case-insensitive)
 *[Hh][Oo][Ll][Dd]*
 
@@ -11,3 +11,11 @@ logs
 *[Bb][Aa][Cc][Kk][Uu][Pp]*
 __pycache__/
 *.pyc
+*.logs
+crontab.log
+*.tmp
+*.bak
+*.swp
+*.pid
+*.log
+*.cache

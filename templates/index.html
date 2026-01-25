@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Urban Heat Island Mapping</title>
+    <!-- Plotly -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+      .controls-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0 12px; }
+      .status { font-size: 12px; opacity: .8; margin-left: 12px; }
+      .danger { color: #b00020; }
+      .spacer { flex: 1; }
+      .muted { opacity: .8; }
+      #map { width: 100%; height: 600px; }
+      .map-overlay iframe { border: none; width: 100%; height: 100%; }
+    </style>
+</head>
+
+<body>
+    <h1>Urban Heat Island Study</h1>
+
+    <img src="{{ url_for('static', filename='QuestLogo.png') }}" alt="Logo" class="logo" onclick="toggleTextbox()">
+
+    <!-- Controls row -->
+    <div class="controls-row">
+        <button onclick="toggleTraces(false)">Hide All</button>
+        <button onclick="toggleTraces(true)">Show All</button>
+        <button onclick="toggleTemperatureUnit()">Toggle °C/°F</button>
+        <button onclick="toggleFoliumMap()">Toggle Map Overlay</button>
+
+        <!-- Subtraction toggle -->
+        <label class="muted">
+          <input id="subtractChk" type="checkbox">
+          Subtract vs <code>Sensor52a</code>
+        </label>
+
+        <!-- Date range controls -->
+        <label class="muted">
+            Start Date:
+            <input type="date" id="startDateInput">
+        </label>
+        <label class="muted">
+            Range (days):
+            <input type="number" id="dateRangeInput" min="1" value="21" style="width:70px;">
+        </label>
+
+        <div class="spacer"></div>
+        <span id="status" class="status">Ready</span>
+    </div>
+
+    <div id="temperature_plot"></div>
+
+    <div class="banner">Community Climate Action Project</div>
+    <div id="textbox" class="textbox">
+        High school students from the local community are working with mentors from Quest Science Center to take hyper local temperature data in our urban areas during heat events. This data will be used to assist cities in determining urban areas where residents are potentially more vulnerable to adverse health effects stemming from extreme temperatures and the formation of urban heat islands.
+    </div>
+
+    <!-- Folium map overlay -->
+    <div id="map-overlay" class="map-overlay">
+        <iframe id="mapFrame" src="/get_map_data"></iframe>
+    </div>
+
+    <script>
+        var plot_data_celsius   = {{ plot_data_celsius   | tojson | safe }};
+        var plot_data_fahrenheit= {{ plot_data_fahrenheit| tojson | safe }};
+        var isCelsius = true;
+
+        const subtractChk = document.getElementById('subtractChk');
+        const statusEl    = document.getElementById('status');
+        const startDateInput = document.getElementById('startDateInput');
+        const dateRangeInput = document.getElementById('dateRangeInput');
+
+        // Initialize the plot
+        Plotly.newPlot('temperature_plot', plot_data_celsius.data ?? [], plot_data_celsius.layout ?? {}, {responsive: true});
+
+        // Load initial date range from server
+        (async () => {
+            try {
+                const r = await fetch('/get_range', { cache: 'no-store' });
+                if (r.ok) {
+                    const j = await r.json();
+                    if (j.start_date) startDateInput.value = j.start_date.split("T")[0]; 
+                    if (j.date_range) dateRangeInput.value = j.date_range; // default is 21
+                }
+            } catch (err) {
+                console.warn('Failed to load initial range', err);
+            }
+        })();
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('map-overlay').style.display = 'none';
+            refreshPlotsFromServer();
+        });
+
+        function setStatus(msg, isError=false) {
+            statusEl.textContent = msg;
+            statusEl.classList.toggle('danger', isError);
+        }
+
+        function toggleTraces(visibility) {
+            var vis = visibility ? true : 'legendonly';
+            var indices = [];
+            var len = (isCelsius ? plot_data_celsius : plot_data_fahrenheit).data.length;
+            for (var i = 0; i < len; i++) indices.push(i);
+            Plotly.restyle('temperature_plot', {visible: vis}, indices);
+        }
+
+        function toggleTemperatureUnit() {
+            isCelsius = !isCelsius;
+            var plot_data = isCelsius ? plot_data_celsius : plot_data_fahrenheit;
+            Plotly.react('temperature_plot', plot_data.data ?? [], plot_data.layout ?? {}, {responsive: true});
+        }
+
+        function toggleFoliumMap() { toggleOverlay('map-overlay'); }
+
+        function toggleTextbox() {
+            var textbox = document.getElementById('textbox');
+            textbox.style.display = (textbox.style.display === 'none' || textbox.style.display === '') ? 'flex' : 'none';
+        }
+
+        function toggleOverlay(id) {
+            var element = document.getElementById(id);
+            element.style.display = (element.style.display === "none" || element.style.display === "") ? "block" : "none";
+        }
+
+        // Update server with new range
+        async function updateRangeOnServer() {
+            const startDate = startDateInput.value || null;
+            const range = parseInt(dateRangeInput.value) || 21;
+
+            try {
+                await fetch('/update_range', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start_date: startDate, date_range: range })
+                });
+            } catch (e) {
+                console.warn('Failed to update range on server', e);
+            }
+        }
+
+        // Refresh plots
+        async function refreshPlotsFromServer() {
+            const subtract_reference = subtractChk.checked ? 'true' : 'false';
+            const startDate = startDateInput.value || '';
+            const range = parseInt(dateRangeInput.value) || 21;
+
+            setStatus('Loading…');
+
+            const url = `/get_plot_data?subtract_reference=${subtract_reference}&start_date=${encodeURIComponent(startDate)}&date_range=${range}`;
+            try {
+                const res = await fetch(url, { cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const json = await res.json();
+
+                plot_data_celsius    = (typeof json.plot_data_celsius === 'string') ? JSON.parse(json.plot_data_celsius) : json.plot_data_celsius;
+                plot_data_fahrenheit = (typeof json.plot_data_fahrenheit === 'string') ? JSON.parse(json.plot_data_fahrenheit) : json.plot_data_fahrenheit;
+
+                const active = isCelsius ? plot_data_celsius : plot_data_fahrenheit;
+                await Plotly.react('temperature_plot', active.data ?? [], active.layout ?? {}, {responsive: true});
+
+                const empty = !active.data || active.data.length === 0;
+                setStatus(empty ? 'No data in range (check sensors/reference).' : 'Done.');
+            } catch (err) {
+                console.error(err);
+                setStatus('Failed to load plot data. See console.', true);
+            }
+        }
+
+        // Wire up controls
+        subtractChk.addEventListener('change', refreshPlotsFromServer);
+        startDateInput.addEventListener('change', refreshPlotsFromServer);
+        dateRangeInput.addEventListener('change', refreshPlotsFromServer);
+
+    </script>
+</body>
+</html>

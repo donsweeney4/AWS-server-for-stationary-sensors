@@ -11,6 +11,10 @@
 *[Bb][Aa][Cc][Kk][Uu][Pp]*
 __pycache__/
 *.pyc
+
+# Environment variables / secrets
+.env
+*.env
 *.logs
 crontab.log
 *.tmp

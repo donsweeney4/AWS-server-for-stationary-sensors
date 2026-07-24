@@ -1,0 +1,5 @@
+Quart==0.19.6
+aiohttp==3.9.5
+folium==0.20.0
+plotly==6.2.0
+mysql-connector-python==8.0.31

@@ -60,7 +60,11 @@ def _build_nearest_lookup(xs_sorted, max_gap: timedelta):
     return nearest_idx
 # ------------------------------------------------------------------- #
 
-
+##//####### Health check ######################################################
+@bp.route('/health')
+def health():
+    """Simple health check endpoint."""
+    return "OK", 200
 #============================== Routes: range getters/setters ==============================#
 @bp.route("/get_range", methods=["GET"])
 async def get_range():
@@ -113,6 +117,16 @@ async def _fetch_batched_sensor_data(sensorid_list, start_sql_str, end_sql_str, 
     return rows
 
 
+async def _fetch_urban_sensor_ids():
+    query = r"""
+        SELECT DISTINCT sensor_name FROM latest_sensor_meta_data
+        WHERE sensor_name REGEXP '^Sensor[0-9]+$';
+    """
+    loop = asyncio.get_event_loop()
+    rows = await loop.run_in_executor(executor, fetch_all_rows, query)
+    return [row["sensor_name"] for row in rows]
+
+
 
 #============================== Data pipeline ==============================#
 async def _fetch_and_process_data():
@@ -138,7 +152,7 @@ async def _fetch_and_process_data():
     traces_celsius, traces_fahrenheit, traces_windspeed = [], [], []
 
     # --- Urban + LLNL DB data ---
-    urban_sensor_ids = [f"Sensor{i}" for i in range(1, 31)]
+    urban_sensor_ids = await _fetch_urban_sensor_ids()
     llnl_sensor_ids = ["Sensor52a", "Sensor52b", "Sensor52c", "Sensor52d"]
 
     urban_rows, llnl_rows = await asyncio.gather(

@@ -12,7 +12,7 @@ async def get_map_data():
             SELECT sensor_id, sensor_name, owners_first_name,
                    date_installed, timestamp,
                    current_latitude, current_longitude
-            FROM latest_sensor_meta_data;
+            FROM stationary_whitelist_sensor_meta_data;
         """
         rows = fetch_all_rows(query)   # assuming sync version
 

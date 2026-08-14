@@ -87,25 +87,34 @@ async def update_range():
 
 
 #============================== DB fetch helper ==============================#
-async def _fetch_batched_sensor_data(sensorid_list, start_sql_str, end_sql_str, table_name="sensor_data"):
+async def _fetch_batched_sensor_data(sensorid_list, start_sql_str, end_sql_str, table_name="stationary_sensorpush_data"):
     if not sensorid_list:
         return []
 
     sensor_list_str = ", ".join(f"'{sid}'" for sid in sensorid_list)
 
-    if table_name == "sensor_data":
+    if table_name == "stationary_sensorpush_data":
         query = f"""
         SELECT t1.sensorid, t1.timestamp, t1.temperature, t2.owners_first_name
-        FROM sensor_data t1
-        INNER JOIN latest_sensor_meta_data t2 ON t1.sensorid = t2.sensor_name
+        FROM stationary_sensorpush_data t1
+        INNER JOIN stationary_whitelist_sensor_meta_data t2 ON t1.sensorid = t2.sensor_name
         WHERE t1.sensorid IN ({sensor_list_str})
           AND t1.timestamp >= '{start_sql_str}'
           AND t1.timestamp < '{end_sql_str}'
         ORDER BY t1.timestamp ASC;
         """
-    elif table_name == "LLNL_data":
+    elif table_name == "stationary_LLNL_data":
         query = f"""
-        SELECT * FROM LLNL_data
+        SELECT * FROM stationary_LLNL_data
+        WHERE sensorid IN ({sensor_list_str})
+          AND timestamp >= '{start_sql_str}'
+          AND timestamp < '{end_sql_str}'
+        ORDER BY timestamp ASC;
+        """
+
+    elif table_name == "stationary_LVFERC_data":
+        query = f"""
+        SELECT * FROM stationary_LVFERC_data
         WHERE sensorid IN ({sensor_list_str})
           AND timestamp >= '{start_sql_str}'
           AND timestamp < '{end_sql_str}'
@@ -119,7 +128,7 @@ async def _fetch_batched_sensor_data(sensorid_list, start_sql_str, end_sql_str, 
 
 async def _fetch_urban_sensor_ids():
     query = r"""
-        SELECT DISTINCT sensor_name FROM latest_sensor_meta_data
+        SELECT DISTINCT sensor_name FROM stationary_whitelist_sensor_meta_data
         WHERE sensor_name REGEXP '^Sensor[0-9]+$';
     """
     loop = asyncio.get_event_loop()
@@ -151,15 +160,21 @@ async def _fetch_and_process_data():
 
     traces_celsius, traces_fahrenheit, traces_windspeed = [], [], []
 
-    # --- Urban + LLNL DB data ---
-    urban_sensor_ids = await _fetch_urban_sensor_ids()
+    # --- Urban + LLNL + LVFERC DB data ---
     llnl_sensor_ids = ["Sensor52a", "Sensor52b", "Sensor52c", "Sensor52d"]
+    lvferc_sensor_ids = ["Sensor60"]
 
-    urban_rows, llnl_rows = await asyncio.gather(
-        _fetch_batched_sensor_data(urban_sensor_ids, start_sql_str, end_sql_str, "sensor_data"),
-        _fetch_batched_sensor_data(llnl_sensor_ids, start_sql_str, end_sql_str, "LLNL_data")
+    urban_sensor_ids = [
+        sid for sid in await _fetch_urban_sensor_ids()
+        if sid not in lvferc_sensor_ids
+    ]
+
+    urban_rows, llnl_rows, lvferc_rows = await asyncio.gather(
+        _fetch_batched_sensor_data(urban_sensor_ids, start_sql_str, end_sql_str, "stationary_sensorpush_data"),
+        _fetch_batched_sensor_data(llnl_sensor_ids, start_sql_str, end_sql_str, "stationary_LLNL_data"),
+        _fetch_batched_sensor_data(lvferc_sensor_ids, start_sql_str, end_sql_str, "stationary_LVFERC_data")
     )
-    logger.debug(f"Fetched {len(urban_rows)} urban rows, {len(llnl_rows)} LLNL rows")
+    logger.debug(f"Fetched {len(urban_rows)} urban rows, {len(llnl_rows)} LLNL rows, {len(lvferc_rows)} LVFERC rows")
 
     # --- Urban traces ---
     urban_data_by_sensor = defaultdict(list)
@@ -193,6 +208,22 @@ async def _fetch_and_process_data():
         visible = True if i == 0 else "legendonly"
         traces_celsius.append(go.Scatter(x=_to_iso(timestamps), y=temps_c, mode="lines", name=extended_name, visible=visible))
         traces_fahrenheit.append(go.Scatter(x=_to_iso(timestamps), y=temps_f, mode="lines", name=extended_name, visible=visible))
+
+    # --- LVFERC traces ---
+    lvferc_data_by_sensor = defaultdict(list)
+    for row in lvferc_rows:
+        lvferc_data_by_sensor[row["sensorid"]].append(row)
+
+    for sid in lvferc_sensor_ids:
+        rows = lvferc_data_by_sensor.get(sid, [])
+        if not rows:
+            continue
+        timestamps = [datetime.fromisoformat(r["timestamp"]) for r in rows]
+        temps_c = [r["temperature"] for r in rows]
+        temps_f = [c * 9 / 5 + 32 for c in temps_c]
+        extended_name = f"{sid} (LVFERC)"
+        traces_celsius.append(go.Scatter(x=_to_iso(timestamps), y=temps_c, mode="lines", name=extended_name))
+        traces_fahrenheit.append(go.Scatter(x=_to_iso(timestamps), y=temps_f, mode="lines", name=extended_name))
 
     # --- Quest Weather Station API ---
     MAX_CONCURRENT_QUEST_CALLS = 3

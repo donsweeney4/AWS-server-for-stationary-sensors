@@ -59,7 +59,7 @@ def fetch_all_rows(query, args=None):
 # Example usage
 if __name__ == "__main__":
     try:
-        query = "SELECT * FROM latest_sensor_meta_data"
+        query = "SELECT * FROM stationary_whitelist_sensor_meta_data"
         results = fetch_all_rows(query)
         for row in results:
             print(row)
